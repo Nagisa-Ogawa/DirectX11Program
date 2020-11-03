@@ -34,8 +34,6 @@ int WINAPI wWinMain(
 	_In_ int		  nShowCmd			// 表示状態
 )
 {
-	// 作成するウィンドウクラスの
-	const WCHAR CLASSNAME[] = L"GameWindow";
 	// ウィンドウクラスを作成
 	WNDCLASSEX wndClass = {};
 	wndClass.cbSize = sizeof(WNDCLASSEX);	// ウィンドウクラスのサイズ
@@ -81,15 +79,15 @@ int WINAPI wWinMain(
 		return -1;
 	}
 	// ウィンドウの表示
-	ShowWindow(hWnd, SW_SHOW);
+	ShowWindow(hWnd, nShowCmd);
 	UpdateWindow(hWnd);
 	MSG msg = {};
 	// メッセージループ
 	while (true) {
 		// メッセージがあるなら
-		if (PeekMessage(&msg, hWnd, 0, 0, PM_NOREMOVE)) {
+		if (PeekMessage(&msg, NULL, 0, 0, PM_NOREMOVE)) {
 			// メッセージを受け取る
-			if (!GetMessage(&msg, hWnd, 0, 0)) {
+			if (!GetMessage(&msg, NULL, 0, 0)) {
 				break;
 			}
 			// 文字メッセージに変換
