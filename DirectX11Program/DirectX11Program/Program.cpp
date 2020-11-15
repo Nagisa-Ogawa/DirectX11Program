@@ -3,8 +3,8 @@
 //
 //=================================================
 
-#include <Windows.h>
-
+#include "Game.h"
+#include <crtdbg.h>
 
 // エントリーポイント
 int WINAPI wWinMain(
@@ -14,21 +14,11 @@ int WINAPI wWinMain(
 	_In_ int		  nShowCmd			// 表示状態
 )
 {
-	MSG msg = {};
-	// メッセージループ
-	while (true) {
-		// メッセージがあるなら
-		if (PeekMessage(&msg, NULL, 0, 0, PM_NOREMOVE)) {
-			// メッセージを受け取る
-			if (!GetMessage(&msg, NULL, 0, 0)) {
-				break;
-			}
-			// 文字メッセージに変換
-			TranslateMessage(&msg);
-			// メッセージをウィンドウプロシージャに送る
-			DispatchMessage(&msg);
-		}
-	}
+	// メモリリークを検出
+	_CrtSetDbgFlag(_CRTDBG_ALLOC_MEM_DF | _CRTDBG_LEAK_CHECK_DF);
 
-	return (int)msg.wParam;
+	Game game;
+	// アプリケーションの起動設定
+	game.Initialize(&game,L"Game", 600.0f, 400.0f);
+	return	game.Run();
 }
