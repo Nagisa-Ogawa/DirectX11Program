@@ -87,6 +87,13 @@ int Game::Run() {
 	ComPtr<ID3D11DeviceContext> immediateContext = nullptr;
 	// スワップチェーン
 	ComPtr<IDXGISwapChain> swapChain = nullptr;
+	// レンダーターゲットビュー
+	ComPtr<ID3D11RenderTargetView> renderTargetViews[1];
+	// 深度ステンシルバッファのフォーマット
+	const DXGI_FORMAT depthStencilFormat = DXGI_FORMAT_D32_FLOAT_S8X24_UINT;
+	// 深度ステンシルビュー
+	ComPtr<ID3D11DepthStencilView> depthStencilView = nullptr;
+
 	// 使用するfeatureLevelの配列
 	D3D_FEATURE_LEVEL featureLevels[] = {
 		D3D_FEATURE_LEVEL_11_1,
@@ -144,8 +151,6 @@ int Game::Run() {
 	
 	// 画面クリアーに使用するカラー
 	FLOAT clearColor[] = { 53 / 255.0f, 70 / 255.0f, 166 / 255.0f, 1.0f };
-	// レンダーターゲットビュー
-	ComPtr<ID3D11RenderTargetView> renderTargetViews[1];
 	hr = graphicsDevice->CreateRenderTargetView(
 		backBuffer.Get(),
 		nullptr,
@@ -155,15 +160,77 @@ int Game::Run() {
 		MessageBox(hWnd, L"レンダーターゲットビューの作成に失敗しました。", L"error", MB_OK);
 		return -1;
 	}
+	
+	// テクスチャのフォーマットを設定
+	DXGI_FORMAT textureFormat = depthStencilFormat;
+	switch (depthStencilFormat)
+	{
+	case DXGI_FORMAT_D16_UNORM:
+		textureFormat = DXGI_FORMAT_R16_TYPELESS;
+		break;
+	case DXGI_FORMAT_D24_UNORM_S8_UINT:
+		textureFormat = DXGI_FORMAT_R24G8_TYPELESS;
+		break;
+	case DXGI_FORMAT_D32_FLOAT:
+		textureFormat = DXGI_FORMAT_R32_TYPELESS;
+		break;
+	case DXGI_FORMAT_D32_FLOAT_S8X24_UINT:
+		textureFormat = DXGI_FORMAT_R32G8X24_TYPELESS;
+		break;
+	}
+	// 深度ステンシルバッファについての記述をする構造体
+	D3D11_TEXTURE2D_DESC depthStencilDesc = {};
+	// 深度ステンシルバッファ
+	ComPtr<ID3D11Texture2D> depthStencilBuffer = nullptr;
+	depthStencilDesc.Width = swapChainDesc.BufferDesc.Width;
+	depthStencilDesc.Height = swapChainDesc.BufferDesc.Height;
+	depthStencilDesc.MipLevels = 1;		// ミップマップのレベル
+	depthStencilDesc.ArraySize = 1;		// テクスチャ配列のサイズ
+	depthStencilDesc.Format = textureFormat;	// テクスチャのフォーマット
+	depthStencilDesc.SampleDesc = swapChainDesc.SampleDesc;	// マルチサンプリング設定
+	depthStencilDesc.Usage = D3D11_USAGE_DEFAULT;	// テクスチャをどのように読み書きするか
+	depthStencilDesc.BindFlags = D3D11_BIND_DEPTH_STENCIL;	// 深度ステンシルに設定
+	depthStencilDesc.CPUAccessFlags = 0;
+	depthStencilDesc.MiscFlags = 0;
+	// 深度ステンシルバッファを作成
+	hr = graphicsDevice->CreateTexture2D(
+		&depthStencilDesc, NULL, &depthStencilBuffer
+	);
+	if (FAILED(hr)) {
+		MessageBox(hWnd, L"深度ステンシルバッファの作成に失敗しました。", L"error", MB_OK);
+		return -1;
+	}
+	// 深度ステンシルビューについて記述する構造体
+	D3D11_DEPTH_STENCIL_VIEW_DESC depthStencilViewDesc = {};
+	depthStencilViewDesc.Format = depthStencilFormat;	// 深度ステンシルビューのフォーマット
+	// マルチサンプリングをしていたらテクスチャの種類を変更
+	if (depthStencilDesc.SampleDesc.Count > 0) {
+		depthStencilViewDesc.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2DMS;
+	}
+	else {
+		depthStencilViewDesc.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2D;
+		depthStencilViewDesc.Texture2D.MipSlice = 0;
+	}
+	depthStencilViewDesc.Texture2D.MipSlice = 0;	// 最初に使用するミップマップのレベル
+
+	// 深度ステンシルビューを作成
+	hr = graphicsDevice->CreateDepthStencilView(
+		depthStencilBuffer.Get(), &depthStencilViewDesc, &depthStencilView
+	);
+
 
 	MSG msg = {};
 	// メッセージループ
 	while (true) {
-		// Direct3Dによる描画処理
 		// レンダーターゲットを設定
 		immediateContext->OMSetRenderTargets(1,renderTargetViews->GetAddressOf(), nullptr);
 		// 画面をクリアー
 		immediateContext->ClearRenderTargetView(renderTargetViews[0].Get(), clearColor);
+		// 深度ステンシルをクリア
+		immediateContext->ClearDepthStencilView(
+			depthStencilView.Get(), D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0
+		);
+		// Direct3Dによる描画処理
 		// バックバッファをディスプレイに表示
 		hr = swapChain->Present(1, 0);
 		if (FAILED(hr))
