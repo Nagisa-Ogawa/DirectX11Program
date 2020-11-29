@@ -3,10 +3,9 @@
 //
 //=================================================
 #include "Game.h"
-#include <d3d11.h>
-#include <wrl/client.h>
+#include <DirectXMath.h>
 
-using namespace Microsoft::WRL;
+using namespace DirectX;
 
 // プロトタイプ宣言
 LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
@@ -18,7 +17,7 @@ void Game::Initialize(Game* game, const LPCWSTR windowTitle, const float width, 
 	game->ScreenHeight = height;
 }
 
-// ウィンドウの初期化をする関数
+// ウィンドウを作成する関数
 bool Game::InitWindow() {
 	HINSTANCE hinstance = GetModuleHandle(NULL);
 	// クラス名
@@ -74,36 +73,9 @@ bool Game::InitWindow() {
 
 	return true;
 }
-// ループ本体
-int Game::Run() {
-	if (!InitWindow()) {
-		MessageBox(NULL, L"ウィンドウの初期化に失敗しました。", L"error", MB_OK);
-		return -1;
-	}
 
-	// デバイス
-	ComPtr<ID3D11Device> graphicsDevice = nullptr;
-	// デバイスコンテキスト
-	ComPtr<ID3D11DeviceContext> immediateContext = nullptr;
-	// スワップチェーン
-	ComPtr<IDXGISwapChain> swapChain = nullptr;
-	// レンダーターゲットビュー
-	ComPtr<ID3D11RenderTargetView> renderTargetViews[1];
-	// 深度ステンシルバッファのフォーマット
-	const DXGI_FORMAT depthStencilFormat = DXGI_FORMAT_D32_FLOAT_S8X24_UINT;
-	// 深度ステンシルビュー
-	ComPtr<ID3D11DepthStencilView> depthStencilView = nullptr;
-
-	// 使用するfeatureLevelの配列
-	D3D_FEATURE_LEVEL featureLevels[] = {
-		D3D_FEATURE_LEVEL_11_1,
-		D3D_FEATURE_LEVEL_11_0,
-		D3D_FEATURE_LEVEL_10_1,
-		D3D_FEATURE_LEVEL_10_0,
-		D3D_FEATURE_LEVEL_9_3,
-	};
-	// 実際に使用するfeatureLevel
-	D3D_FEATURE_LEVEL getFeatureLevel;
+// グラフィックデバイスを作成する関数
+bool Game::InitGraphicsDevice() {
 	// デバイス作成時のオプションフラグ
 	UINT creationFlag = 0;
 	if (_DEBUG) {
@@ -118,7 +90,10 @@ int Game::Run() {
 	swapChainDesc.BufferDesc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;	// フォーマット
 	swapChainDesc.BufferDesc.RefreshRate = { 60,1 };	// リフレッシュレート(1/60)
 	swapChainDesc.SampleDesc = { 1,0 };	/// マルチサンプリング（未使用）
-	swapChainDesc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;	// バッファの使い方
+	swapChainDesc.BufferUsage =		// バッファの使用方法
+		DXGI_USAGE_RENDER_TARGET_OUTPUT |
+		DXGI_USAGE_SHADER_INPUT;	// シェーダーリソースとして使用することを設定
+	// バッファの使い方
 	swapChainDesc.BufferCount = 2;	// バッファの数
 	swapChainDesc.OutputWindow = hWnd;	// バッファを表示するウィンドウ
 	swapChainDesc.Windowed = TRUE;	// ウィンドウ化するかどうか
@@ -127,13 +102,13 @@ int Game::Run() {
 	// デバイスとデバイスコンテキストとスワップチェーンを作成
 	hr = D3D11CreateDeviceAndSwapChain(
 		NULL, D3D_DRIVER_TYPE_HARDWARE, NULL, creationFlag, featureLevels, ARRAYSIZE(featureLevels),
-		D3D11_SDK_VERSION, &swapChainDesc, &swapChain,
-		&graphicsDevice, &getFeatureLevel, &immediateContext);
+		D3D11_SDK_VERSION, &swapChainDesc, swapChain.GetAddressOf(),
+		graphicsDevice.GetAddressOf(), &getFeatureLevel, immediateContext.GetAddressOf());
 
 	// デバイスとデバイスコンテキストとスワップチェーンを作成できたかチェック
 	if (FAILED(hr)) {
 		MessageBox(hWnd, L"デバイスかスワップチェーンの作成に失敗しました。", L"error", MB_OK);
-		return -1;
+		return FALSE;
 	}
 
 	// バックバッファー
@@ -146,36 +121,42 @@ int Game::Run() {
 	);
 	if (FAILED(hr)) {
 		MessageBox(hWnd, L"バックバッファーの作成に失敗しました。", L"error", MB_OK);
-		return -1;
+		return FALSE;
 	}
-	
-	// 画面クリアーに使用するカラー
-	FLOAT clearColor[] = { 53 / 255.0f, 70 / 255.0f, 166 / 255.0f, 1.0f };
-	hr = graphicsDevice->CreateRenderTargetView(
-		backBuffer.Get(),
-		nullptr,
-		&renderTargetViews[0]
-	);
+	// バックバッファにアクセスするためのレンダーターゲットビューを作成
+	hr = graphicsDevice->CreateRenderTargetView(backBuffer.Get(), nullptr, renderTargetViews[0].GetAddressOf());
 	if (FAILED(hr)) {
 		MessageBox(hWnd, L"レンダーターゲットビューの作成に失敗しました。", L"error", MB_OK);
-		return -1;
+		return FALSE;
 	}
-	
+	// バックバッファにシェーダーからアクセスするためのリソースビューを作成
+	hr = graphicsDevice->CreateShaderResourceView(backBuffer.Get(), NULL, renderTargetResourceView.GetAddressOf());
+	if (FAILED(hr)) {
+		MessageBox(hWnd, L"レンダーターゲットリソースビューの作成に失敗しました。", L"error", MB_OK);
+		return FALSE;
+	}
+
+
 	// テクスチャのフォーマットを設定
 	DXGI_FORMAT textureFormat = depthStencilFormat;
+	DXGI_FORMAT resourceFormat = depthStencilFormat;
 	switch (depthStencilFormat)
 	{
 	case DXGI_FORMAT_D16_UNORM:
 		textureFormat = DXGI_FORMAT_R16_TYPELESS;
+		resourceFormat = DXGI_FORMAT_R16_UNORM;
 		break;
 	case DXGI_FORMAT_D24_UNORM_S8_UINT:
 		textureFormat = DXGI_FORMAT_R24G8_TYPELESS;
+		resourceFormat = DXGI_FORMAT_R24_UNORM_X8_TYPELESS;
 		break;
 	case DXGI_FORMAT_D32_FLOAT:
 		textureFormat = DXGI_FORMAT_R32_TYPELESS;
+		resourceFormat = DXGI_FORMAT_R32_FLOAT;
 		break;
 	case DXGI_FORMAT_D32_FLOAT_S8X24_UINT:
 		textureFormat = DXGI_FORMAT_R32G8X24_TYPELESS;
+		resourceFormat = DXGI_FORMAT_R32_FLOAT_X8X24_TYPELESS;
 		break;
 	}
 	// 深度ステンシルバッファについての記述をする構造体
@@ -189,16 +170,18 @@ int Game::Run() {
 	depthStencilDesc.Format = textureFormat;	// テクスチャのフォーマット
 	depthStencilDesc.SampleDesc = swapChainDesc.SampleDesc;	// マルチサンプリング設定
 	depthStencilDesc.Usage = D3D11_USAGE_DEFAULT;	// テクスチャをどのように読み書きするか
-	depthStencilDesc.BindFlags = D3D11_BIND_DEPTH_STENCIL;	// 深度ステンシルに設定
+	depthStencilDesc.BindFlags =
+		D3D11_BIND_DEPTH_STENCIL |	// 深度ステンシルに設定
+		D3D11_BIND_SHADER_RESOURCE;	// シェーダーリソースとして使用することを設定
 	depthStencilDesc.CPUAccessFlags = 0;
 	depthStencilDesc.MiscFlags = 0;
 	// 深度ステンシルバッファを作成
 	hr = graphicsDevice->CreateTexture2D(
-		&depthStencilDesc, NULL, &depthStencilBuffer
+		&depthStencilDesc, NULL, depthStencilBuffer.GetAddressOf()
 	);
 	if (FAILED(hr)) {
 		MessageBox(hWnd, L"深度ステンシルバッファの作成に失敗しました。", L"error", MB_OK);
-		return -1;
+		return FALSE;
 	}
 	// 深度ステンシルビューについて記述する構造体
 	D3D11_DEPTH_STENCIL_VIEW_DESC depthStencilViewDesc = {};
@@ -215,9 +198,111 @@ int Game::Run() {
 
 	// 深度ステンシルビューを作成
 	hr = graphicsDevice->CreateDepthStencilView(
-		depthStencilBuffer.Get(), &depthStencilViewDesc, &depthStencilView
+		depthStencilBuffer.Get(), &depthStencilViewDesc, depthStencilView.GetAddressOf()
 	);
 
+	// 深度ステンシルにシェーダからアクセスするためのリソースビューについての記述をする構造体
+	D3D11_SHADER_RESOURCE_VIEW_DESC depthStencilResourceViewDesc = {};
+	depthStencilResourceViewDesc.Format = resourceFormat;
+	if (depthStencilDesc.SampleDesc.Count > 0) {
+		depthStencilResourceViewDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2DMS;
+	}
+	else {
+		depthStencilResourceViewDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+		depthStencilResourceViewDesc.Texture2D.MostDetailedMip = 0;
+		depthStencilResourceViewDesc.Texture2D.MipLevels = 1;
+	}
+	// 深度ステンシルにシェーダーからアクセスするためのリソースビューを作成
+	hr = graphicsDevice->CreateShaderResourceView(
+		depthStencilBuffer.Get(),
+		&depthStencilResourceViewDesc,
+		depthStencilResoureceView.GetAddressOf());
+	if (FAILED(hr)) {
+		MessageBox(hWnd, L"深度ステンシル リソース ビューを作成できませんでした。", L"エラー", MB_OK);
+		return FALSE;
+	}
+
+	// ビューポート
+	viewports[0].Width = static_cast<FLOAT>(ScreenWidth);
+	viewports[0].Height = static_cast<FLOAT>(ScreenHeight);
+	viewports[0].MinDepth = 0.0f;
+	viewports[0].MaxDepth = 1.0f;
+	viewports[0].TopLeftX = 0.0f;
+	viewports[0].TopLeftY = 0.0f;
+
+	return true;
+}
+// ループ本体
+int Game::Run() {
+	// ウィンドウを作成
+	if (!InitWindow()) {
+		MessageBox(NULL, L"ウィンドウの初期化に失敗しました。", L"error", MB_OK);
+		return -1;
+	}
+	// グラフィックデバイスを作成
+	if (!InitGraphicsDevice()) {
+		MessageBox(NULL, L"グラフィックデバイスの初期化に失敗しました。", L"error", MB_OK);
+		return -1;
+	}
+
+	HRESULT hr = S_OK;
+
+	// 頂点バッファ
+	ComPtr<ID3D11Buffer> vertexBuffer = nullptr;
+
+	// 頂点データに含めるデータ
+	struct VertexData
+	{
+		// 座標
+		XMFLOAT3 position;
+	};
+
+	VertexData vertexData[3] = {
+		{ { 0.0f, 1.0f, 0.0f } },
+		{ {-1.0f,-1.0f, 0.0f } },
+		{ { 1.0f,-1.0f, 0.0f } },
+	};
+
+	// 頂点バッファについて記述する構造体
+	D3D11_BUFFER_DESC vertexBufferDesc = {};
+	vertexBufferDesc.ByteWidth = sizeof(vertexData);	// バッファのサイズ
+	vertexBufferDesc.Usage = D3D11_USAGE_DEFAULT;
+	vertexBufferDesc.BindFlags = D3D11_BIND_VERTEX_BUFFER;	// バッファの使用方法(頂点バッファとして使用)
+	vertexBufferDesc.CPUAccessFlags = 0;
+	vertexBufferDesc.MiscFlags = 0;
+	vertexBufferDesc.StructureByteStride = 0;	// 頂点バッファとして使うなら0
+	// 頂点バッファを作成
+	hr = graphicsDevice->CreateBuffer(&vertexBufferDesc, NULL, vertexBuffer.GetAddressOf());
+	if (FAILED(hr)) {
+		MessageBox(hWnd, L"頂点バッファを作成できませんでした。", L"エラー", MB_OK);
+		return FALSE;
+	}
+
+	// 作成したバッファにデータを転送
+	immediateContext->UpdateSubresource(vertexBuffer.Get(), 0, NULL, vertexData, 0, 0);
+
+	// インデックスデータ
+	UINT indexData[] = { 0,1,2 };
+
+	// インデックスバッファについて記述する構造体
+	D3D11_BUFFER_DESC indexBufferDesc = {};
+	indexBufferDesc.ByteWidth = sizeof(indexData);
+	indexBufferDesc.Usage = D3D11_USAGE_DEFAULT;
+	indexBufferDesc.BindFlags = D3D11_BIND_INDEX_BUFFER;	// インデックスバッファとして使用
+	indexBufferDesc.CPUAccessFlags = 0;
+	indexBufferDesc.MiscFlags = 0;
+	indexBufferDesc.StructureByteStride = 0;
+	// インデックスバッファ
+	ComPtr<ID3D11Buffer> indexBuffer = nullptr;
+	// インデックスバッファを作成
+	hr = graphicsDevice->CreateBuffer(&indexBufferDesc, NULL, indexBuffer.GetAddressOf());
+	if (FAILED(hr)) {
+		MessageBox(hWnd, L"インデックスバッファを作成できませんでした。", L"エラー", MB_OK);
+		return FALSE;
+	}
+
+	// 作成したバッファにデータを転送
+	immediateContext->UpdateSubresource(indexBuffer.Get(), 0, NULL, indexData, 0, 0);
 
 	MSG msg = {};
 	// メッセージループ
@@ -230,7 +315,21 @@ int Game::Run() {
 		immediateContext->ClearDepthStencilView(
 			depthStencilView.Get(), D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0
 		);
+		// ビューポートを設定
+		immediateContext->RSSetViewports(1,viewports);
+
 		// Direct3Dによる描画処理
+		// 頂点バッファを設定
+		ID3D11Buffer* vertexBuffers[1] = { vertexBuffer.Get() };
+		UINT strides[1] = { sizeof(VertexData) };
+		UINT offsets[1] = { 0 };
+		// インプットアセンブリーに頂点バッファを送る
+		immediateContext->IASetVertexBuffers(
+			0,
+			ARRAYSIZE(vertexBuffers),
+			vertexBuffers, strides, offsets);
+
+
 		// バックバッファをディスプレイに表示
 		hr = swapChain->Present(1, 0);
 		if (FAILED(hr))
