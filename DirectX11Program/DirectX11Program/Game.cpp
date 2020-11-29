@@ -3,7 +3,9 @@
 //
 //=================================================
 #include "Game.h"
+#include <d3dcompiler.h>
 #include <DirectXMath.h>
+#include <DirectXColors.h>
 
 using namespace DirectX;
 
@@ -232,6 +234,7 @@ bool Game::InitGraphicsDevice() {
 
 	return true;
 }
+
 // ループ本体
 int Game::Run() {
 	// ウィンドウを作成
@@ -257,7 +260,7 @@ int Game::Run() {
 		XMFLOAT3 position;
 	};
 
-	VertexData vertexData[3] = {
+	VertexData vertexData[] = {
 		{ { 0.0f, 1.0f, 0.0f } },
 		{ {-1.0f,-1.0f, 0.0f } },
 		{ { 1.0f,-1.0f, 0.0f } },
@@ -280,6 +283,27 @@ int Game::Run() {
 
 	// 作成したバッファにデータを転送
 	immediateContext->UpdateSubresource(vertexBuffer.Get(), 0, NULL, vertexData, 0, 0);
+
+	ID3DBlob* bytecode = nullptr;		// コンパイルされたシェーダーのバイトコード
+	ID3DBlob* errorMessage = nullptr;	// エラーメッセージ
+	// 頂点シェーダをコンパイル
+	hr = D3DCompileFromFile(
+		L"BasicVertexShader.hlsl",
+		NULL,
+		D3D_COMPILE_STANDARD_FILE_INCLUDE,
+		"main",		// エントリーポイント
+		"vs_5_0",	// コンパイルするシェーダのターゲット
+		D3DCOMPILE_DEBUG, NULL,
+		&bytecode,			// コンパイルしたシェーダーを入れるバイトコード
+		&errorMessage		// エラーメッセージ
+	);
+	if (FAILED(hr) && errorMessage != nullptr) {
+		LPCSTR message = nullptr;
+		message = static_cast<LPCSTR>(errorMessage->GetBufferPointer());
+		OutputDebugStringA(message);	// 出力ウィンドウに表示
+	}
+	SAFE_RELEASE(errorMessage);
+	SAFE_RELEASE(bytecode);
 
 	// インデックスデータ
 	UINT indexData[] = { 0,1,2 };
