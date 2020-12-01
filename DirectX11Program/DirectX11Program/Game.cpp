@@ -2,10 +2,11 @@
 //Game.cpp
 //
 //=================================================
-#include "Game.h"
-#include <d3dcompiler.h>
 #include <DirectXMath.h>
 #include <DirectXColors.h>
+#include "Game.h"
+#include "BasicVertexShader.h"
+#include "BasicPixelShader.h"
 
 using namespace DirectX;
 
@@ -93,8 +94,8 @@ bool Game::InitGraphicsDevice() {
 	swapChainDesc.BufferDesc.RefreshRate = { 60,1 };	// リフレッシュレート(1/60)
 	swapChainDesc.SampleDesc = { 1,0 };	/// マルチサンプリング（未使用）
 	swapChainDesc.BufferUsage =		// バッファの使用方法
-		DXGI_USAGE_RENDER_TARGET_OUTPUT |
-		DXGI_USAGE_SHADER_INPUT;	// シェーダーリソースとして使用することを設定
+		DXGI_USAGE_RENDER_TARGET_OUTPUT |	// シェーダーリソースとして使用することを設定
+		DXGI_USAGE_SHADER_INPUT;	
 	// バッファの使い方
 	swapChainDesc.BufferCount = 2;	// バッファの数
 	swapChainDesc.OutputWindow = hWnd;	// バッファを表示するウィンドウ
@@ -284,33 +285,12 @@ int Game::Run() {
 	// 作成したバッファにデータを転送
 	immediateContext->UpdateSubresource(vertexBuffer.Get(), 0, NULL, vertexData, 0, 0);
 
-	ID3DBlob* bytecode = nullptr;		// コンパイルされたシェーダーのバイトコード
-	ID3DBlob* errorMessage = nullptr;	// エラーメッセージ
-	// 頂点シェーダをコンパイル
-	hr = D3DCompileFromFile(
-		L"BasicVertexShader.hlsl",
-		NULL,
-		D3D_COMPILE_STANDARD_FILE_INCLUDE,
-		"main",		// エントリーポイント
-		"vs_5_0",	// コンパイルするシェーダのターゲット
-		D3DCOMPILE_DEBUG, NULL,
-		&bytecode,			// コンパイルしたシェーダーを入れるバイトコード
-		&errorMessage		// エラーメッセージ
-	);
-	if (FAILED(hr) && errorMessage != nullptr) {
-		LPCSTR message = nullptr;
-		message = static_cast<LPCSTR>(errorMessage->GetBufferPointer());
-		OutputDebugStringA(message);	// 出力ウィンドウに表示
-	}
-	SAFE_RELEASE(errorMessage);
-	SAFE_RELEASE(bytecode);
-
 	// インデックスデータ
-	UINT indexData[] = { 0,1,2 };
+	UINT indices[] = { 0,1,2 };
 
 	// インデックスバッファについて記述する構造体
 	D3D11_BUFFER_DESC indexBufferDesc = {};
-	indexBufferDesc.ByteWidth = sizeof(indexData);
+	indexBufferDesc.ByteWidth = sizeof(indices);
 	indexBufferDesc.Usage = D3D11_USAGE_DEFAULT;
 	indexBufferDesc.BindFlags = D3D11_BIND_INDEX_BUFFER;	// インデックスバッファとして使用
 	indexBufferDesc.CPUAccessFlags = 0;
@@ -326,7 +306,41 @@ int Game::Run() {
 	}
 
 	// 作成したバッファにデータを転送
-	immediateContext->UpdateSubresource(indexBuffer.Get(), 0, NULL, indexData, 0, 0);
+	immediateContext->UpdateSubresource(indexBuffer.Get(), 0, NULL, indices, 0, 0);
+
+	// 頂点シェーダーを作成
+	ComPtr<ID3D11VertexShader> vertexShader = nullptr;
+	hr = graphicsDevice->CreateVertexShader(
+		g_BasicVertexShader,
+		ARRAYSIZE(g_BasicVertexShader),
+		NULL,
+		vertexShader.GetAddressOf()
+	);
+	if (FAILED(hr)) {
+		OutputDebugString(L"頂点シェーダーの作成に失敗しました。");
+	}
+
+	// ピクセルシェーダーを作成
+	ComPtr<ID3D11PixelShader> pixelShader = nullptr;
+	hr = graphicsDevice->CreatePixelShader(g_BasicPixelShader, ARRAYSIZE(g_BasicPixelShader), NULL, pixelShader.GetAddressOf());
+	if (FAILED(hr)){
+		OutputDebugString(L"ピクセルシェーダーの作成に失敗しました。");
+	}
+
+
+	D3D11_INPUT_ELEMENT_DESC inputElementDesc[] = {
+		{"POSITION",0,DXGI_FORMAT_R32G32B32_FLOAT,0,0,D3D11_INPUT_PER_VERTEX_DATA,0}
+	};
+	// 入力レイアウトを作成
+	ComPtr<ID3D11InputLayout> inputLayout = nullptr;
+	hr = graphicsDevice->CreateInputLayout(
+		inputElementDesc, ARRAYSIZE(inputElementDesc),		// 入力レイアウトについての記述とその配列の数
+		g_BasicVertexShader, ARRAYSIZE(g_BasicVertexShader),	// 入力を受け取る頂点シェーダーのバイトコードとサイズ
+		inputLayout.GetAddressOf()
+	);
+	if (FAILED(hr)) {
+		OutputDebugString(L"入力レイアウトを作成できませんでした。");
+	}
 
 	MSG msg = {};
 	// メッセージループ
@@ -352,7 +366,20 @@ int Game::Run() {
 			0,
 			ARRAYSIZE(vertexBuffers),
 			vertexBuffers, strides, offsets);
+		// 頂点シェーダーをセット
+		immediateContext->VSSetShader(vertexShader.Get(), NULL, 0);
+		// ピクセルシェーダーをセット
+		immediateContext->PSSetShader(pixelShader.Get(), NULL, 0);
 
+		// 頂点バッファーと頂点シェーダーの組み合わせに対応した入力レイアウトを設定
+		immediateContext->IASetInputLayout(inputLayout.Get());
+		// プリミティブトポロジーとしてトライアングルをセット
+		immediateContext->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+
+		// インデックスバッファを設定
+		immediateContext->IASetIndexBuffer(indexBuffer.Get(), DXGI_FORMAT_R32_UINT, 0);
+		// 描画
+		immediateContext->DrawIndexed(3, 0, 0);
 
 		// バックバッファをディスプレイに表示
 		hr = swapChain->Present(1, 0);
@@ -363,7 +390,6 @@ int Game::Run() {
 				L"エラー", MB_OK);
 			return -1;
 		}
-
 
 		// メッセージがあるなら
 		if (PeekMessage(&msg, NULL, 0, 0, PM_NOREMOVE)) {

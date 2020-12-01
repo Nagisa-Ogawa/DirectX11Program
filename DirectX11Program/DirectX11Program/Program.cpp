@@ -19,6 +19,6 @@ int WINAPI wWinMain(
 
 	Game game;
 	// アプリケーションの起動設定
-	game.Initialize(&game,L"Game", 860.0f, 640.0f);
+	game.Initialize(&game,L"Game", 600, 400);
 	return	game.Run();
 }
