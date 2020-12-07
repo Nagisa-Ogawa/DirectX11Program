@@ -6,6 +6,7 @@
 #include <DirectXColors.h>
 #include "Game.h"
 #include "BasicVertexShader.h"
+#include "BasicGeometryShader.h"
 #include "BasicPixelShader.h"
 
 using namespace DirectX;
@@ -257,14 +258,14 @@ int Game::Run() {
 	// 頂点データに含めるデータ
 	struct VertexData
 	{
-		// 座標
-		XMFLOAT3 position;
+		XMFLOAT3 position;	// 位置データ
+		XMFLOAT3 normal;	// 法線データ
 	};
 
 	VertexData vertexData[] = {
-		{ { 0.0f, 1.0f, 0.0f } },
-		{ {-1.0f,-1.0f, 0.0f } },
-		{ { 1.0f,-1.0f, 0.0f } },
+		{ { -1.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, -1.0f } },
+		{ {  0.0f, 1.0f, 0.0f }, { 0.0f, 0.0f, -1.0f } },
+		{ {  1.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, -1.0f } },
 	};
 
 	// 頂点バッファについて記述する構造体
@@ -308,6 +309,31 @@ int Game::Run() {
 	// 作成したバッファにデータを転送
 	immediateContext->UpdateSubresource(indexBuffer.Get(), 0, NULL, indices, 0, 0);
 
+	// 定数バッファーを介してシェーダーに毎フレーム送るデータ
+	struct MatricesPerFrame {
+		DirectX::XMFLOAT4X4 worldMatrix;
+		DirectX::XMFLOAT4X4 viewMatrix;
+		DirectX::XMFLOAT4X4 projectionMatrix;
+		DirectX::XMFLOAT4X4 worldViewProjectionMatrix;
+	};
+	// 定数バッファーを作成
+	ComPtr<ID3D11Buffer> constantBuffer = nullptr;
+	{
+		// 作成するバッファについての記述
+		D3D11_BUFFER_DESC bufferDesc = { 0 };
+		bufferDesc.ByteWidth = sizeof(MatricesPerFrame);	// 作成するバッファーのサイズ
+		bufferDesc.Usage = D3D11_USAGE_DEFAULT;		// バッファーの使用用途
+		bufferDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;		// 定数バッファーとして使用
+		bufferDesc.CPUAccessFlags = 0;
+		bufferDesc.MiscFlags = 0;
+		bufferDesc.StructureByteStride = 0;
+		graphicsDevice->CreateBuffer(&bufferDesc, nullptr, constantBuffer.GetAddressOf());
+		if (FAILED(hr)) {
+			MessageBox(hWnd, L"定数バッファを作成できませんでした。", L"エラー", MB_OK);
+			return FALSE;
+		}
+	}
+
 	// 頂点シェーダーを作成
 	ComPtr<ID3D11VertexShader> vertexShader = nullptr;
 	hr = graphicsDevice->CreateVertexShader(
@@ -320,6 +346,14 @@ int Game::Run() {
 		OutputDebugString(L"頂点シェーダーの作成に失敗しました。");
 	}
 
+	// ジオメトリーシェーダーを作成
+	ComPtr<ID3D11GeometryShader> geometryShader = nullptr;
+	hr = graphicsDevice->CreateGeometryShader(g_BasicGeometryShader,ARRAYSIZE(g_BasicGeometryShader),NULL,geometryShader.GetAddressOf()
+	);
+	if (FAILED(hr)) {
+		OutputDebugString(L"ジオメトリ―シェーダーの作成に失敗しました。");
+	}
+
 	// ピクセルシェーダーを作成
 	ComPtr<ID3D11PixelShader> pixelShader = nullptr;
 	hr = graphicsDevice->CreatePixelShader(g_BasicPixelShader, ARRAYSIZE(g_BasicPixelShader), NULL, pixelShader.GetAddressOf());
@@ -329,7 +363,8 @@ int Game::Run() {
 
 
 	D3D11_INPUT_ELEMENT_DESC inputElementDesc[] = {
-		{"POSITION",0,DXGI_FORMAT_R32G32B32_FLOAT,0,0,D3D11_INPUT_PER_VERTEX_DATA,0}
+		{"POSITION",0,DXGI_FORMAT_R32G32B32_FLOAT,0,0,D3D11_INPUT_PER_VERTEX_DATA,0},
+		{"NORMAL",  0,DXGI_FORMAT_R32G32B32_FLOAT,0,12,D3D11_INPUT_PER_VERTEX_DATA,0}
 	};
 	// 入力レイアウトを作成
 	ComPtr<ID3D11InputLayout> inputLayout = nullptr;
@@ -345,6 +380,38 @@ int Game::Run() {
 	MSG msg = {};
 	// メッセージループ
 	while (true) {
+		// 定数バッファーへ転送するデータソースを準備
+		XMMATRIX worldMatrix = XMMatrixTranslation(0.0f, 0.0f, 0.0f);
+		// ビュー行列を計算
+		XMVECTOR eyePosition = XMVectorSet(0, 1, -10, 1);
+		XMVECTOR focusPosition = XMVectorSet(0, 1, 0, 1);
+		XMVECTOR upDirection = XMVectorSet(0, 1, 0, 0);
+		XMMATRIX viewMatrix =
+			XMMatrixLookAtLH(eyePosition, focusPosition, upDirection);
+		// プロジェクション行列を計算
+		float fovAngleY = 60.0f;
+		float aspectRatio = 640 / 480.0f;
+		float nearZ = 0.3f;
+		float farZ = 1000.0f;
+		XMMATRIX projectionMatrix =
+			XMMatrixPerspectiveFovLH(XMConvertToRadians(fovAngleY), aspectRatio, nearZ, farZ);
+
+		MatricesPerFrame matricesPerFrame = {};
+		XMStoreFloat4x4(
+			&matricesPerFrame.worldMatrix,
+			XMMatrixTranspose(worldMatrix));
+		XMStoreFloat4x4(
+			&matricesPerFrame.viewMatrix,
+			XMMatrixTranspose(viewMatrix));
+		XMStoreFloat4x4(
+			&matricesPerFrame.projectionMatrix,
+			XMMatrixTranspose(projectionMatrix));
+		XMStoreFloat4x4(
+			&matricesPerFrame.worldViewProjectionMatrix,
+			XMMatrixTranspose(worldMatrix* viewMatrix* projectionMatrix));
+		// 定数バッファーを更新
+		immediateContext->UpdateSubresource(constantBuffer.Get(), 0, NULL, &matricesPerFrame, 0, 0);
+
 		// レンダーターゲットを設定
 		immediateContext->OMSetRenderTargets(1,renderTargetViews->GetAddressOf(), nullptr);
 		// 画面をクリアー
@@ -368,8 +435,14 @@ int Game::Run() {
 			vertexBuffers, strides, offsets);
 		// 頂点シェーダーをセット
 		immediateContext->VSSetShader(vertexShader.Get(), NULL, 0);
+		// ジオメトリーシェーダーをセット
+		immediateContext->GSSetShader(geometryShader.Get(), NULL, 0);
 		// ピクセルシェーダーをセット
 		immediateContext->PSSetShader(pixelShader.Get(), NULL, 0);
+
+		// 頂点シェーダーに定数バッファーを設定
+		ComPtr<ID3D11Buffer> constantBuffers[1] = { constantBuffer.Get() };
+		immediateContext->VSSetConstantBuffers(0, 1, constantBuffers->GetAddressOf());
 
 		// 頂点バッファーと頂点シェーダーの組み合わせに対応した入力レイアウトを設定
 		immediateContext->IASetInputLayout(inputLayout.Get());
@@ -379,7 +452,7 @@ int Game::Run() {
 		// インデックスバッファを設定
 		immediateContext->IASetIndexBuffer(indexBuffer.Get(), DXGI_FORMAT_R32_UINT, 0);
 		// 描画
-		immediateContext->DrawIndexed(3, 0, 0);
+		immediateContext->DrawIndexed(ARRAYSIZE(indices), 0, 0);
 
 		// バックバッファをディスプレイに表示
 		hr = swapChain->Present(1, 0);
